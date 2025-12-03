@@ -3,62 +3,72 @@ import signal
 import sys
 
 # ==========================
-# CONTROL VARIABLES
+# SERVER/IP SETTINGS
 # ==========================
-stream = True   # Master switch: True = streaming on, False = disable all
-twitch = True   # Twitch output
-kick = True     # Kick output
-vlc = True      # Local VLC output
+server_ip = "your.ip.v.4.here"  # Local IP of this machine
 
 # ==========================
-# INPUT AND OUTPUTS
+# CONTROL FLAGS
 # ==========================
-input_stream = "rtmp://192.168.0.113:1935/live/stream"
+stream = True
+twitch = True
+kick = True
+vlc = True
+vrchat = True
 
+# ==========================
+# INPUT STREAM FROM OBS
+# ==========================
+input_stream = f"rtmp://{server_ip}:1935/live/stream"
+
+# ==========================
+# OUTPUT STREAMS
+# ==========================
 twitch_url = "rtmp://live.twitch.tv/app/YOUR_TWITCH_KEY"
 kick_url   = "rtmp://live.kick.com/app/YOUR_KICK_KEY"
-vlc_url    = "rtmp://192.168.0.113:1935/live/vlc"
+vlc_url    = f"rtmp://{server_ip}:1935/live/vlc"
+vrchat_url = f"rtsp://{server_ip}:8554/vrchat"  # FFmpeg RTSP server
 
 # ==========================
-# BITRATE SETTINGS (optional)
+# BITRATE SETTINGS
 # ==========================
-# Set to None to use original bitrate / copy
-twitch_video_bitrate = "6000k"  # e.g., 6000 kbps
+twitch_video_bitrate = "6000k"
 twitch_audio_bitrate = "160k"
 
 kick_video_bitrate = "6000k"
 kick_audio_bitrate = "160k"
 
-vlc_video_bitrate = "4000k"     # Lower for local playback
+vlc_video_bitrate = "4000k"
 vlc_audio_bitrate = "128k"
+
+vrchat_video_bitrate = "4000k"
+vrchat_audio_bitrate = "128k"
 
 # ==========================
 # FUNCTION TO START FFmpeg
 # ==========================
-def start_ffmpeg(output, transcode_vlc=False, video_bitrate=None, audio_bitrate=None):
-    if transcode_vlc or video_bitrate or audio_bitrate:
-        cmd = ["ffmpeg", "-i", input_stream]
+def start_ffmpeg(output, transcode=False, video_bitrate=None, audio_bitrate=None, rtsp_server=False):
+    cmd = ["ffmpeg", "-y", "-i", input_stream]
 
-        # Video
-        if transcode_vlc or video_bitrate:
-            cmd += ["-c:v", "libx264"]
-            cmd += ["-preset", "veryfast"]
-            if video_bitrate:
-                cmd += ["-b:v", video_bitrate]
-        else:
-            cmd += ["-c:v", "copy"]
-
-        # Audio
-        if transcode_vlc or audio_bitrate:
-            cmd += ["-c:a", "aac"]
-            cmd += ["-b:a", audio_bitrate if audio_bitrate else "128k"]
-        else:
-            cmd += ["-c:a", "copy"]
-
-        cmd += ["-f", "flv", output]
+    # Video
+    if transcode or video_bitrate or rtsp_server:
+        cmd += ["-c:v", "libx264", "-preset", "veryfast"]
+        if video_bitrate:
+            cmd += ["-b:v", video_bitrate]
     else:
-        # Simple copy (no re-encode)
-        cmd = ["ffmpeg", "-i", input_stream, "-c", "copy", "-f", "flv", output]
+        cmd += ["-c:v", "copy"]
+
+    # Audio
+    if transcode or audio_bitrate or rtsp_server:
+        cmd += ["-c:a", "aac", "-b:a", audio_bitrate if audio_bitrate else "128k"]
+    else:
+        cmd += ["-c:a", "copy"]
+
+    # Output format
+    if rtsp_server:
+        cmd += ["-f", "rtsp", "-rtsp_flags", "listen", output]
+    else:
+        cmd += ["-f", "flv", output]
 
     return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
@@ -71,28 +81,21 @@ if stream:
     if twitch:
         processes.append(start_ffmpeg(twitch_url, video_bitrate=twitch_video_bitrate, audio_bitrate=twitch_audio_bitrate))
         print("Twitch streaming enabled.")
-    else:
-        print("Twitch streaming disabled.")
-
     if kick:
         processes.append(start_ffmpeg(kick_url, video_bitrate=kick_video_bitrate, audio_bitrate=kick_audio_bitrate))
         print("Kick streaming enabled.")
-    else:
-        print("Kick streaming disabled.")
-
     if vlc:
-        processes.append(start_ffmpeg(vlc_url, transcode_vlc=True, video_bitrate=vlc_video_bitrate, audio_bitrate=vlc_audio_bitrate))
+        processes.append(start_ffmpeg(vlc_url, transcode=True, video_bitrate=vlc_video_bitrate, audio_bitrate=vlc_audio_bitrate))
         print("VLC streaming enabled (H.264/AAC).")
-    else:
-        print("VLC streaming disabled.")
+    if vrchat:
+        processes.append(start_ffmpeg(vrchat_url, transcode=True, video_bitrate=vrchat_video_bitrate, audio_bitrate=vrchat_audio_bitrate, rtsp_server=True))
+        print("VRChat streaming enabled (RTSP H.264/AAC).")
 
     if not processes:
         print("No outputs enabled. Exiting.")
         sys.exit(0)
 
-    print("Streaming started...")
-
-    # Function to stop streams cleanly
+    # Handle Ctrl+C cleanly
     def stop_stream(signal_received, frame):
         print("\nStopping streams...")
         for p in processes:
